@@ -1093,56 +1093,94 @@ execute: async (args, { log }) => {
 // === GOOGLE DRIVE TOOLS ===
 
 server.addTool({
-name: 'listGoogleDocs',
-description: 'Lists Google Documents from your Google Drive with optional filtering.',
-parameters: z.object({
-  maxResults: z.number().int().min(1).max(100).optional().default(20).describe('Maximum number of documents to return (1-100).'),
-  query: z.string().optional().describe('Search query to filter documents by name or content.'),
-  orderBy: z.enum(['name', 'modifiedTime', 'createdTime']).optional().default('modifiedTime').describe('Sort order for results.'),
-}),
-execute: async (args, { log }) => {
-const drive = await getDriveClient();
-log.info(`Listing Google Docs. Query: ${args.query || 'none'}, Max: ${args.maxResults}, Order: ${args.orderBy}`);
+  name: "listGoogleDocs",
+  description:
+    "Lists Google Documents from your Google Drive with optional filtering.",
+  // kiegészítjük, hogy a tokeneket is át tudja venni
+  parameters: z.object({
+    oauthTokens: z.object({
+      access_token: z.string(),
+      refresh_token: z.string().optional(),
+      expiry_date: z.number().optional(),
+    }),
+    maxResults: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .default(20)
+      .describe("Maximum number of documents to return (1-100)."),
+    query: z
+      .string()
+      .optional()
+      .describe("Search query to filter documents by name or content."),
+    orderBy: z
+      .enum(["name", "modifiedTime", "createdTime"])
+      .optional()
+      .default("modifiedTime")
+      .describe("Sort order for results."),
+  }),
+  execute: async (args, { log }) => {
+    // itt tokenekből építjük a Drive klienst
+    const { googleDrive } = await getGoogleClient(args.oauthTokens);
+    log.info(
+      `Listing Google Docs. Query: ${args.query || "none"}, Max: ${
+        args.maxResults
+      }, Order: ${args.orderBy}`
+    );
 
-try {
-  // Build the query string for Google Drive API
-  let queryString = "mimeType='application/vnd.google-apps.document' and trashed=false";
-  if (args.query) {
-    queryString += ` and (name contains '${args.query}' or fullText contains '${args.query}')`;
-  }
+    try {
+      // Build the query string for Google Drive API
+      let queryString =
+        "mimeType='application/vnd.google-apps.document' and trashed=false";
+      if (args.query) {
+        // használj escape-et ha szükséges (ne szúrjon be injekciót)
+        const q = args.query.replace(/'/g, "\\'");
+        queryString += ` and (name contains '${q}' or fullText contains '${q}')`;
+      }
 
-  const response = await drive.files.list({
-    q: queryString,
-    pageSize: args.maxResults,
-    orderBy: args.orderBy === 'name' ? 'name' : args.orderBy,
-    fields: 'files(id,name,modifiedTime,createdTime,size,webViewLink,owners(displayName,emailAddress))',
-  });
+      const response = await googleDrive.files.list({
+        q: queryString,
+        pageSize: args.maxResults,
+        orderBy: args.orderBy === "name" ? "name" : args.orderBy,
+        fields:
+          "files(id,name,modifiedTime,createdTime,size,webViewLink,owners(displayName,emailAddress))",
+      });
 
-  const files = response.data.files || [];
+      const files = response.data.files || [];
 
-  if (files.length === 0) {
-    return "No Google Docs found matching your criteria.";
-  }
+      if (files.length === 0) {
+        return "No Google Docs found matching your criteria.";
+      }
 
-  let result = `Found ${files.length} Google Document(s):\n\n`;
-  files.forEach((file, index) => {
-    const modifiedDate = file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : 'Unknown';
-    const owner = file.owners?.[0]?.displayName || 'Unknown';
-    result += `${index + 1}. **${file.name}**\n`;
-    result += `   ID: ${file.id}\n`;
-    result += `   Modified: ${modifiedDate}\n`;
-    result += `   Owner: ${owner}\n`;
-    result += `   Link: ${file.webViewLink}\n\n`;
-  });
+      let result = `Found ${files.length} Google Document(s):\n\n`;
+      files.forEach((file, index) => {
+        const modifiedDate = file.modifiedTime
+          ? new Date(file.modifiedTime).toLocaleDateString()
+          : "Unknown";
+        const owner = file.owners?.[0]?.displayName || "Unknown";
+        result += `${index + 1}. **${file.name}**\n`;
+        result += `   ID: ${file.id}\n`;
+        result += `   Modified: ${modifiedDate}\n`;
+        result += `   Owner: ${owner}\n`;
+        result += `   Link: ${file.webViewLink}\n\n`;
+      });
 
-  return result;
-} catch (error: any) {
-  log.error(`Error listing Google Docs: ${error.message || error}`);
-  if (error.code === 403) throw new UserError("Permission denied. Make sure you have granted Google Drive access to the application.");
-  throw new UserError(`Failed to list documents: ${error.message || 'Unknown error'}`);
-}
-}
+      return result;
+    } catch (error: any) {
+      log.error(`Error listing Google Docs: ${error.message || error}`);
+      if (error.code === 403)
+        throw new UserError(
+          "Permission denied. Make sure you have granted Google Drive access to the application."
+        );
+      throw new UserError(
+        `Failed to list documents: ${error.message || "Unknown error"}`
+      );
+    }
+  },
 });
+
 
 server.addTool({
 name: 'searchGoogleDocs',
@@ -1813,7 +1851,7 @@ try {
 // --- Server Startup ---
 async function startServer() {
 try {
-await initializeGoogleClient(); // Authorize BEFORE starting listeners
+// await initializeGoogleClient(); // Authorize BEFORE starting listeners
 console.error("Starting Ultimate Google Docs MCP server...");
 
       // Using stdio as before
