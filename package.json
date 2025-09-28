@@ -15,10 +15,12 @@
     "fastmcp": "^1.21.0",
     "google-auth-library": "^9.15.1",
     "googleapis": "^148.0.0",
+    "uuid": "^10.0.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
+    "@types/uuid": "^10.0.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"
   }

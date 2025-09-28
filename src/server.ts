@@ -2,7 +2,7 @@
 import { FastMCP, UserError } from 'fastmcp';
 import { z } from 'zod';
 import { google, docs_v1, drive_v3 } from 'googleapis';
-import { authorize } from './auth.js';
+import { authorize, createNewClient, listClientCredentials, loadClient } from './auth.js';
 import { OAuth2Client } from 'google-auth-library';
 
 // Import types and helpers
@@ -20,6 +20,7 @@ ApplyParagraphStyleToolParameters, ApplyParagraphStyleToolArgs,
 NotImplementedError
 } from './types.js';
 import * as GDocsHelpers from './googleDocsApiHelpers.js';
+import { getGoogleClient, getGoogleClientByCredentials } from './googleClient.js';
 
 let authClient: OAuth2Client | null = null;
 let googleDocs: docs_v1.Docs | null = null;
@@ -77,6 +78,103 @@ const server = new FastMCP({
   version: '1.0.0'
 });
 
+// === CLIENT MANAGEMENT TOOLS ===
+
+server.addTool({
+  name: 'createNewGoogleClient',
+  description: 'Creates a new Google client with unique credentials file for multi-client support.',
+  parameters: z.object({
+    clientName: z.string().optional().describe('Optional name for the client. If not provided, a unique UUID will be generated.'),
+  }),
+  execute: async (args, { log }) => {
+    log.info(`Creating new Google client${args.clientName ? ` with name: ${args.clientName}` : ''}`);
+    
+    try {
+      const { client, credentialsFileName } = await createNewClient(args.clientName);
+      log.info(`Successfully created client with credentials file: ${credentialsFileName}`);
+      
+      return `Successfully created new Google client with credentials file: ${credentialsFileName}\n\nYou can now use this client by specifying the credentialsFileName parameter in other tools.`;
+    } catch (error: any) {
+      log.error(`Error creating new client: ${error.message || error}`);
+      throw new UserError(`Failed to create new client: ${error.message || 'Unknown error'}`);
+    }
+  }
+});
+
+server.addTool({
+  name: 'listGoogleClients',
+  description: 'Lists all available Google client credentials files.',
+  parameters: z.object({}),
+  execute: async (args, { log }) => {
+    log.info('Listing available Google clients');
+    
+    try {
+      const clients = await listClientCredentials();
+      
+      if (clients.length === 0) {
+        return 'No Google client credentials found. Use createNewGoogleClient to create your first client.';
+      }
+      
+      let result = `Found ${clients.length} Google client(s):\n\n`;
+      clients.forEach((client, index) => {
+        result += `${index + 1}. ${client}\n`;
+      });
+      
+      result += `\nUse any of these client names as the credentialsFileName parameter in other tools.`;
+      
+      return result;
+    } catch (error: any) {
+      log.error(`Error listing clients: ${error.message || error}`);
+      throw new UserError(`Failed to list clients: ${error.message || 'Unknown error'}`);
+    }
+  }
+});
+
+server.addTool({
+  name: 'setWorkflowCredentials',
+  description: 'Sets the default credentials file to use for the current workflow session.',
+  parameters: z.object({
+    credentialsFileName: z.string().describe('Name of the credentials file to use as default for this workflow.'),
+  }),
+  execute: async (args, { log }) => {
+    log.info(`Setting workflow credentials to: ${args.credentialsFileName}`);
+    
+    try {
+      // Verify the credentials file exists
+      const clients = await listClientCredentials();
+      if (!clients.includes(args.credentialsFileName)) {
+        throw new UserError(`Credentials file '${args.credentialsFileName}' not found. Use listGoogleClients to see available clients.`);
+      }
+      
+      // Store the workflow credentials in a simple way (in a real implementation, you might use a more sophisticated session management)
+      process.env.CURRENT_WORKFLOW_CREDENTIALS = args.credentialsFileName;
+      
+      return `Workflow credentials set to: ${args.credentialsFileName}\n\nAll subsequent API calls in this workflow will use these credentials unless explicitly overridden.`;
+    } catch (error: any) {
+      log.error(`Error setting workflow credentials: ${error.message || error}`);
+      if (error instanceof UserError) throw error;
+      throw new UserError(`Failed to set workflow credentials: ${error.message || 'Unknown error'}`);
+    }
+  }
+});
+
+server.addTool({
+  name: 'getWorkflowCredentials',
+  description: 'Gets the currently set workflow credentials file.',
+  parameters: z.object({}),
+  execute: async (args, { log }) => {
+    log.info('Getting current workflow credentials');
+    
+    const currentCredentials = process.env.CURRENT_WORKFLOW_CREDENTIALS;
+    
+    if (!currentCredentials) {
+      return 'No workflow credentials currently set. Use setWorkflowCredentials to set default credentials for this workflow.';
+    }
+    
+    return `Current workflow credentials: ${currentCredentials}`;
+  }
+});
+
 // --- Helper to get Docs client within tools ---
 async function getDocsClient() {
 const { googleDocs: docs } = await initializeGoogleClient();
@@ -93,6 +191,42 @@ if (!drive) {
 throw new UserError("Google Drive client is not initialized. Authentication might have failed during startup or lost connection.");
 }
 return drive;
+}
+
+// --- Helper to get Docs client with specific credentials ---
+async function getDocsClientWithCredentials(credentialsFileName: string) {
+const { googleDocs: docs } = await getGoogleClientByCredentials(credentialsFileName);
+if (!docs) {
+throw new UserError(`Google Docs client could not be initialized with credentials: ${credentialsFileName}`);
+}
+return docs;
+}
+
+// --- Helper to get Drive client with specific credentials ---
+async function getDriveClientWithCredentials(credentialsFileName: string) {
+const { googleDrive: drive } = await getGoogleClientByCredentials(credentialsFileName);
+if (!drive) {
+throw new UserError(`Google Drive client could not be initialized with credentials: ${credentialsFileName}`);
+}
+return drive;
+}
+
+// --- Helper to get Docs client with workflow or specific credentials ---
+async function getDocsClientForWorkflow(credentialsFileName?: string) {
+const effectiveCredentials = credentialsFileName || process.env.CURRENT_WORKFLOW_CREDENTIALS;
+if (effectiveCredentials) {
+  return await getDocsClientWithCredentials(effectiveCredentials);
+}
+return await getDocsClient();
+}
+
+// --- Helper to get Drive client with workflow or specific credentials ---
+async function getDriveClientForWorkflow(credentialsFileName?: string) {
+const effectiveCredentials = credentialsFileName || process.env.CURRENT_WORKFLOW_CREDENTIALS;
+if (effectiveCredentials) {
+  return await getDriveClientWithCredentials(effectiveCredentials);
+}
+return await getDriveClient();
 }
 
 // === HELPER FUNCTIONS ===
@@ -265,11 +399,13 @@ description: 'Reads the content of a specific Google Document, optionally return
 parameters: DocumentIdParameter.extend({
 format: z.enum(['text', 'json', 'markdown']).optional().default('text')
 .describe("Output format: 'text' (plain text), 'json' (raw API structure, complex), 'markdown' (experimental conversion)."),
-maxLength: z.number().optional().describe('Maximum character limit for text output. If not specified, returns full document content. Use this to limit very large documents.')
+maxLength: z.number().optional().describe('Maximum character limit for text output. If not specified, returns full document content. Use this to limit very large documents.'),
+credentialsFileName: z.string().optional().describe('Name of the credentials file to use for authentication. If not provided, uses the default client.')
 }),
 execute: async (args, { log }) => {
-const docs = await getDocsClient();
-log.info(`Reading Google Doc: ${args.documentId}, Format: ${args.format}`);
+const docs = await getDocsClientForWorkflow(args.credentialsFileName);
+const effectiveCredentials = args.credentialsFileName || process.env.CURRENT_WORKFLOW_CREDENTIALS;
+log.info(`Reading Google Doc: ${args.documentId}, Format: ${args.format}${effectiveCredentials ? `, Client: ${effectiveCredentials}` : ''}`);
 
     try {
         const fields = args.format === 'json' || args.format === 'markdown'
@@ -1102,7 +1238,8 @@ server.addTool({
       access_token: z.string(),
       refresh_token: z.string().optional(),
       expiry_date: z.number().optional(),
-    }),
+    }).optional(),
+    credentialsFileName: z.string().optional().describe('Name of the credentials file to use for authentication. If not provided, uses oauthTokens or default client.'),
     maxResults: z
       .number()
       .int()
@@ -1123,11 +1260,19 @@ server.addTool({
   }),
   execute: async (args, { log }) => {
     // itt tokenekből építjük a Drive klienst
-    const { googleDrive } = await getGoogleClient(args.oauthTokens);
+    let googleDrive;
+    if (args.oauthTokens) {
+      const { googleDrive: drive } = await getGoogleClient(args.oauthTokens);
+      googleDrive = drive;
+    } else {
+      googleDrive = await getDriveClientForWorkflow(args.credentialsFileName);
+    }
+    
+    const effectiveCredentials = args.credentialsFileName || process.env.CURRENT_WORKFLOW_CREDENTIALS;
     log.info(
       `Listing Google Docs. Query: ${args.query || "none"}, Max: ${
         args.maxResults
-      }, Order: ${args.orderBy}`
+      }, Order: ${args.orderBy}${effectiveCredentials ? `, Client: ${effectiveCredentials}` : ''}`
     );
 
     try {

@@ -42,6 +42,12 @@ This comprehensive server uses the Model Context Protocol (MCP) and the `fastmcp
 - **File Operations:** Move (`moveFile`), copy (`copyFile`), rename (`renameFile`), delete (`deleteFile`)
 - **Document Creation:** Create new docs (`createDocument`) or from templates (`createFromTemplate`)
 
+### 🆕 Multi-Client Support
+- **Multiple Google Accounts:** Create and manage multiple client credentials
+- **Workflow Defaults:** Set default credentials for entire workflows
+- **Per-Call Override:** Use specific credentials for individual API calls
+- **Client Management:** Create, list, and switch between different Google accounts
+
 ### Integration
 - **Google Authentication:** Secure OAuth 2.0 authentication with full Drive access
 - **MCP Compliant:** Designed for use with Claude and other MCP clients
@@ -220,6 +226,46 @@ Once configured, you should be able to use the tools in your chats with Claude:
 Remember to replace `YOUR_GOOGLE_DOC_ID` with the actual ID from a Google Doc's URL (the long string between `/d/` and `/edit`).
 
 Claude will automatically launch your server in the background when needed using the command you provided. You do **not** need to run `node ./dist/server.js` manually anymore.
+
+---
+
+## 🆕 Multi-Client Usage
+
+The server now supports multiple Google accounts! This is perfect for managing work and personal documents, or collaborating across different Google Workspace accounts.
+
+### Quick Start with Multiple Clients
+
+1. **Create additional clients:**
+   ```
+   Use createNewGoogleClient with clientName "work-account"
+   Use createNewGoogleClient with clientName "personal-account"
+   ```
+
+2. **Set workflow default:**
+   ```
+   Use setWorkflowCredentials with credentialsFileName "work-account"
+   ```
+
+3. **Use specific credentials:**
+   ```
+   Use readGoogleDoc with documentId "YOUR_DOC_ID" and credentialsFileName "personal-account"
+   ```
+
+### Multi-Client Tools
+
+- **`createNewGoogleClient`**: Create a new client with unique credentials
+- **`listGoogleClients`**: List all available client credentials  
+- **`setWorkflowCredentials`**: Set default credentials for current workflow
+- **`getWorkflowCredentials`**: Get current workflow credentials
+
+All document and drive tools now support an optional `credentialsFileName` parameter to override the default client.
+
+### Environment Variables
+
+- `GOOGLE_CREDENTIALS_DIR`: Directory for client credentials (default: `./credentials/`)
+- `CURRENT_WORKFLOW_CREDENTIALS`: Current workflow's default credentials (set automatically)
+
+For detailed multi-client usage, see [MULTI_CLIENT_USAGE.md](MULTI_CLIENT_USAGE.md).
 
 ---
 

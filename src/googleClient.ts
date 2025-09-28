@@ -1,5 +1,6 @@
 // src/googleClient.ts
 import { google } from "googleapis";
+import { loadClient } from "./auth.js";
 
 export async function getGoogleClient(oauthTokens: {
   access_token: string;
@@ -14,6 +15,16 @@ export async function getGoogleClient(oauthTokens: {
 
   oauth2Client.setCredentials(oauthTokens);
 
+  const googleDocs = google.docs({ version: "v1", auth: oauth2Client });
+  const googleDrive = google.drive({ version: "v3", auth: oauth2Client });
+
+  return { oauth2Client, googleDocs, googleDrive };
+}
+
+// New function to get Google client using credentials filename
+export async function getGoogleClientByCredentials(credentialsFileName: string) {
+  const oauth2Client = await loadClient(credentialsFileName);
+  
   const googleDocs = google.docs({ version: "v1", auth: oauth2Client });
   const googleDrive = google.drive({ version: "v3", auth: oauth2Client });
 

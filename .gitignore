@@ -5,6 +5,7 @@ dist/
 # Credentials / Tokens
 credentials.json
 token.json
+credentials/
 
 # Log files
 *.log
